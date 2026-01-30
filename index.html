@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Relationship Assessment | Happy Ever After Couples</title>
+    <title>Relationship Assessment | HEA Couples</title>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
         * {
@@ -737,7 +737,9 @@
                 { value: 0, label: "Not at all" },
                 { value: 1, label: "Somewhat" },
                 { value: 2, label: "Mostly" },
-                { value: 3, label: "Completely" }
+                { value: 3, label: "Completely" },
+                { value: -1, label: "N/A (Not Applicable)" },
+                { value: 0, label: "I don't know" }
             ]
         };
 
@@ -905,20 +907,35 @@
             
             assessmentData.sections.forEach(section => {
                 let sectionScore = 0;
+                let applicableQuestions = 0;
+                
                 section.questions.forEach((q, i) => {
                     const questionId = `s${section.id}_q${i + 1}`;
-                    sectionScore += responses[questionId] || 0;
+                    const response = responses[questionId];
+                    
+                    // Only count if not N/A (-1)
+                    if (response !== undefined && response !== -1) {
+                        sectionScore += response || 0;
+                        applicableQuestions++;
+                    }
                 });
                 
-                const maxScore = section.questions.length * 3;
-                const percentage = Math.round((sectionScore / maxScore) * 100);
-                scores[section.name] = { score: sectionScore, max: maxScore, percentage };
+                // Calculate based only on applicable questions
+                const maxScore = applicableQuestions * 3;
+                const percentage = applicableQuestions > 0 ? Math.round((sectionScore / maxScore) * 100) : 0;
+                scores[section.name] = { 
+                    score: sectionScore, 
+                    max: maxScore, 
+                    percentage,
+                    applicableQuestions,
+                    totalQuestions: section.questions.length
+                };
                 
                 totalScore += sectionScore;
-                totalQuestions += section.questions.length;
+                totalQuestions += applicableQuestions;
             });
             
-            const overallPercentage = Math.round((totalScore / (totalQuestions * 3)) * 100);
+            const overallPercentage = totalQuestions > 0 ? Math.round((totalScore / (totalQuestions * 3)) * 100) : 0;
             
             // Save final data
             const finalData = {
@@ -926,6 +943,7 @@
                 responses,
                 scores,
                 overallPercentage,
+                totalApplicableQuestions: totalQuestions,
                 completedAt: new Date().toISOString()
             };
             
@@ -941,6 +959,9 @@
                     <p style="margin-top: 30px; padding: 25px; background: var(--background); border-radius: 16px; font-size: 1.3rem;">
                         <strong>Your Overall Score:</strong><br>
                         <span style="font-size: 2.5rem; color: var(--primary); font-family: 'Playfair Display', serif; font-weight: 700;">${overallPercentage}/100</span>
+                    </p>
+                    <p style="margin-top: 20px; color: var(--text-secondary); font-size: 0.95rem;">
+                        Based on ${totalQuestions} applicable questions
                     </p>
                     <p style="margin-top: 30px; color: var(--text-secondary);">
                         Your coach has been notified and will review your results.<br>
@@ -968,12 +989,17 @@
             content += `Partner: ${data.userData.partnerName}\n`;
             content += `Date: ${data.userData.assessmentDate}\n`;
             content += `Completed: ${new Date(data.completedAt).toLocaleString()}\n\n`;
-            content += `OVERALL SCORE: ${data.overallPercentage}/100\n\n`;
+            content += `OVERALL SCORE: ${data.overallPercentage}/100\n`;
+            content += `(Based on ${data.totalApplicableQuestions} applicable questions)\n\n`;
             content += `SECTION SCORES:\n`;
             content += `===============\n`;
             
             for (const [name, score] of Object.entries(data.scores)) {
-                content += `${name}: ${score.percentage}% (${score.score}/${score.max})\n`;
+                content += `${name}: ${score.percentage}% (${score.score}/${score.max})`;
+                if (score.applicableQuestions < score.totalQuestions) {
+                    content += ` - ${score.applicableQuestions}/${score.totalQuestions} questions applicable`;
+                }
+                content += `\n`;
             }
             
             content += `\n\nDETAILED RESPONSES:\n`;
