@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Relationship Assessment | HEA Couples</title>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -546,6 +547,10 @@
                     <input type="text" id="userName" placeholder="Enter your name" required>
                 </div>
                 <div class="form-group">
+                    <label for="userEmail">Your Email</label>
+                    <input type="email" id="userEmail" placeholder="your.email@example.com" required>
+                </div>
+                <div class="form-group">
                     <label for="partnerName">Partner's Name</label>
                     <input type="text" id="partnerName" placeholder="Enter your partner's name" required>
                 </div>
@@ -753,15 +758,23 @@
 
         function startAssessment() {
             const userName = document.getElementById('userName').value.trim();
+            const userEmail = document.getElementById('userEmail').value.trim();
             const partnerName = document.getElementById('partnerName').value.trim();
             const assessmentDate = document.getElementById('assessmentDate').value;
 
-            if (!userName || !partnerName || !assessmentDate) {
+            if (!userName || !userEmail || !partnerName || !assessmentDate) {
                 alert('Please fill in all fields before starting.');
                 return;
             }
 
-            userData = { userName, partnerName, assessmentDate };
+            // Validate email
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(userEmail)) {
+                alert('Please enter a valid email address.');
+                return;
+            }
+
+            userData = { userName, userEmail, partnerName, assessmentDate };
             
             document.getElementById('welcomeScreen').style.display = 'none';
             document.getElementById('assessmentForm').classList.add('active');
@@ -857,6 +870,7 @@
                 if (Object.keys(responses).length > 0) {
                     if (confirm('Would you like to resume your previous assessment?')) {
                         document.getElementById('userName').value = userData.userName;
+                        document.getElementById('userEmail').value = userData.userEmail || '';
                         document.getElementById('partnerName').value = userData.partnerName;
                         document.getElementById('assessmentDate').value = userData.assessmentDate;
                         startAssessment();
@@ -897,6 +911,41 @@
             } else {
                 completeAssessment();
             }
+        }
+
+        function submitToGoogleSheets(finalData) {
+            // Google Apps Script Web App URL - you'll replace this with your actual URL
+            const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx1NYlSZ_vDCNUlbH_3GF7kx8YlBqAip61RtS0y9HFVdAgpUB7FygfDacqlENf8RTZ3/exec
+            
+            // Prepare data for submission
+            const submissionData = {
+                timestamp: new Date().toISOString(),
+                userName: finalData.userData.userName,
+                userEmail: finalData.userData.userEmail,
+                partnerName: finalData.userData.partnerName,
+                assessmentDate: finalData.userData.assessmentDate,
+                overallScore: finalData.overallPercentage,
+                totalApplicableQuestions: finalData.totalApplicableQuestions,
+                scores: finalData.scores,
+                responses: finalData.responses
+            };
+            
+            // Submit to Google Sheets
+            fetch(GOOGLE_SCRIPT_URL, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(submissionData)
+            })
+            .then(() => {
+                console.log('Submission sent to coach');
+            })
+            .catch(error => {
+                console.error('Submission error:', error);
+                // Still allow user to complete even if submission fails
+            });
         }
 
         function completeAssessment() {
@@ -949,6 +998,9 @@
             
             localStorage.setItem('relationshipAssessmentComplete', JSON.stringify(finalData));
             
+            // Submit to Google Sheets
+            submitToGoogleSheets(finalData);
+            
             // Show completion screen
             const container = document.getElementById('questionsContainer');
             container.innerHTML = `
@@ -968,7 +1020,7 @@
                         You'll receive a detailed report and next steps soon.
                     </p>
                     <button class="btn btn-primary" onclick="downloadResults()" style="margin-top: 30px;">
-                        Download Your Results
+                        Download Your Results (PDF)
                         <span>↓</span>
                     </button>
                 </div>
@@ -982,52 +1034,153 @@
 
         function downloadResults() {
             const data = JSON.parse(localStorage.getItem('relationshipAssessmentComplete'));
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
             
-            let content = `RELATIONSHIP ASSESSMENT RESULTS\n`;
-            content += `================================\n\n`;
-            content += `Participant: ${data.userData.userName}\n`;
-            content += `Partner: ${data.userData.partnerName}\n`;
-            content += `Date: ${data.userData.assessmentDate}\n`;
-            content += `Completed: ${new Date(data.completedAt).toLocaleString()}\n\n`;
-            content += `OVERALL SCORE: ${data.overallPercentage}/100\n`;
-            content += `(Based on ${data.totalApplicableQuestions} applicable questions)\n\n`;
-            content += `SECTION SCORES:\n`;
-            content += `===============\n`;
+            let yPos = 20;
+            const lineHeight = 7;
+            const pageHeight = 280;
+            const leftMargin = 20;
+            const rightMargin = 190;
             
-            for (const [name, score] of Object.entries(data.scores)) {
-                content += `${name}: ${score.percentage}% (${score.score}/${score.max})`;
-                if (score.applicableQuestions < score.totalQuestions) {
-                    content += ` - ${score.applicableQuestions}/${score.totalQuestions} questions applicable`;
+            // Helper function to check if we need a new page
+            function checkPageBreak(needed = 10) {
+                if (yPos + needed > pageHeight) {
+                    doc.addPage();
+                    yPos = 20;
+                    return true;
                 }
-                content += `\n`;
+                return false;
             }
             
-            content += `\n\nDETAILED RESPONSES:\n`;
-            content += `===================\n\n`;
+            // Helper function to add wrapped text
+            function addText(text, fontSize, style = 'normal', color = [0, 0, 0]) {
+                doc.setFontSize(fontSize);
+                doc.setFont('helvetica', style);
+                doc.setTextColor(...color);
+                
+                const lines = doc.splitTextToSize(text, rightMargin - leftMargin);
+                lines.forEach(line => {
+                    checkPageBreak();
+                    doc.text(line, leftMargin, yPos);
+                    yPos += lineHeight;
+                });
+            }
+            
+            // Title
+            doc.setFillColor(45, 95, 126);
+            doc.rect(0, 0, 210, 40, 'F');
+            doc.setTextColor(255, 255, 255);
+            doc.setFontSize(24);
+            doc.setFont('helvetica', 'bold');
+            doc.text('Relationship Assessment Results', 105, 20, { align: 'center' });
+            doc.setFontSize(12);
+            doc.text('Welcome to Your Happy Ever After', 105, 30, { align: 'center' });
+            
+            yPos = 50;
+            
+            // Client Information
+            doc.setTextColor(0, 0, 0);
+            addText(`Participant: ${data.userData.userName}`, 12, 'bold');
+            addText(`Email: ${data.userData.userEmail}`, 10, 'normal');
+            addText(`Partner: ${data.userData.partnerName}`, 10, 'normal');
+            addText(`Assessment Date: ${data.userData.assessmentDate}`, 10, 'normal');
+            addText(`Completed: ${new Date(data.completedAt).toLocaleString()}`, 10, 'normal');
+            yPos += 5;
+            
+            // Overall Score - Highlighted Box
+            checkPageBreak(25);
+            doc.setFillColor(250, 248, 245);
+            doc.roundedRect(leftMargin, yPos, rightMargin - leftMargin, 20, 3, 3, 'F');
+            doc.setFontSize(14);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(45, 95, 126);
+            doc.text('Overall Score:', leftMargin + 5, yPos + 8);
+            doc.setFontSize(24);
+            doc.text(`${data.overallPercentage}/100`, leftMargin + 5, yPos + 17);
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(107, 114, 128);
+            doc.text(`Based on ${data.totalApplicableQuestions} applicable questions`, leftMargin + 60, yPos + 17);
+            yPos += 30;
+            
+            // Section Scores
+            checkPageBreak(15);
+            doc.setTextColor(0, 0, 0);
+            addText('Section Scores', 16, 'bold', [45, 95, 126]);
+            doc.setDrawColor(229, 221, 213);
+            doc.line(leftMargin, yPos, rightMargin, yPos);
+            yPos += 5;
+            
+            for (const [name, score] of Object.entries(data.scores)) {
+                checkPageBreak(12);
+                doc.setFontSize(11);
+                doc.setFont('helvetica', 'bold');
+                doc.text(name, leftMargin, yPos);
+                doc.setFont('helvetica', 'normal');
+                doc.text(`${score.percentage}%`, rightMargin - 30, yPos, { align: 'right' });
+                doc.setFontSize(9);
+                doc.setTextColor(107, 114, 128);
+                doc.text(`(${score.score}/${score.max} points)`, rightMargin - 10, yPos, { align: 'right' });
+                
+                if (score.applicableQuestions < score.totalQuestions) {
+                    yPos += 5;
+                    doc.text(`${score.applicableQuestions} of ${score.totalQuestions} questions applicable`, leftMargin + 5, yPos);
+                }
+                
+                yPos += 8;
+                doc.setTextColor(0, 0, 0);
+            }
+            
+            yPos += 5;
+            
+            // Detailed Responses
+            checkPageBreak(15);
+            addText('Detailed Responses', 16, 'bold', [45, 95, 126]);
+            doc.line(leftMargin, yPos, rightMargin, yPos);
+            yPos += 10;
             
             assessmentData.sections.forEach(section => {
-                content += `\n${section.name.toUpperCase()}\n`;
-                content += `-`.repeat(section.name.length) + `\n`;
+                checkPageBreak(15);
+                addText(section.name.toUpperCase(), 13, 'bold', [45, 95, 126]);
+                yPos += 2;
                 
                 section.questions.forEach((question, i) => {
+                    checkPageBreak(15);
                     const questionId = `s${section.id}_q${i + 1}`;
                     const value = data.responses[questionId];
-                    const label = assessmentData.options.find(o => o.value == value)?.label || 'Not answered';
-                    content += `Q${i + 1}. ${question}\n`;
-                    content += `    Answer: ${label}\n\n`;
+                    const option = assessmentData.options.find(o => o.value == value);
+                    const label = option?.label || 'Not answered';
+                    
+                    // Color code the answer
+                    let answerColor = [0, 0, 0];
+                    if (value === 3) answerColor = [123, 168, 136]; // Green for "Completely"
+                    else if (value === 0) answerColor = [232, 146, 124]; // Red for "Not at all" or "I don't know"
+                    else if (value === -1) answerColor = [107, 114, 128]; // Gray for N/A
+                    
+                    doc.setFontSize(10);
+                    doc.setFont('helvetica', 'normal');
+                    doc.setTextColor(0, 0, 0);
+                    const qLines = doc.splitTextToSize(`Q${i + 1}. ${question}`, rightMargin - leftMargin - 5);
+                    qLines.forEach(line => {
+                        checkPageBreak();
+                        doc.text(line, leftMargin + 2, yPos);
+                        yPos += 5;
+                    });
+                    
+                    doc.setFontSize(9);
+                    doc.setFont('helvetica', 'bold');
+                    doc.setTextColor(...answerColor);
+                    doc.text(`Answer: ${label}`, leftMargin + 7, yPos);
+                    yPos += 7;
+                    doc.setTextColor(0, 0, 0);
                 });
+                
+                yPos += 5;
             });
             
-            // Create download
-            const blob = new Blob([content], { type: 'text/plain' });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `Relationship_Assessment_${data.userData.userName}_${data.userData.assessmentDate}.txt`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(url);
+            // Save the PDF
+            doc.save(`Relationship_Assessment_${data.userData.userName}_${data.userData.assessmentDate}.pdf`);
         }
 
         // Load saved data on page load
